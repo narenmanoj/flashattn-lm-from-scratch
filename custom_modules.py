@@ -124,4 +124,19 @@ class RotaryPositionalEmbedding(torch.nn.Module):
 
 
 def scaled_dot_product_attention(query, key, value, attn_mask=None):
+    qk_t = einsum(query, key, "batch ... seq d_k, batch ... seq d_k -> batch ... d_k d_k")
+    pre_softmax = qk_t / torch.sqrt(qk_t.shape[-1])
+    if attn_mask:
+        attn_mask_recip = 1.0 / attn_mask
+        pre_softmax_masked = einsum(pre_softmax, attn_mask_recip, "batch ... seq seq, seq seq -> batch ... seq seq")
+
+        pre_softmax_masked = torch.nan_to_num(
+            pre_softmax_masked,
+            nan=float("-inf"),
+            posinf=float("-inf"),
+            neginf=float("-inf")
+        )
+    else:
+        pre_softmax_masked = pre_softmax
+    
     raise NotImplementedError
