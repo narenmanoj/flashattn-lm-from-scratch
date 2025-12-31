@@ -94,9 +94,15 @@ class RotaryPositionalEmbedding(torch.nn.Module):
         super(RotaryPositionalEmbedding, self).__init__()
         self.theta = theta
         self.d_k = d_k
-        self.max_seq_len = max_seq_len
+        self.max_seq_len = max_seq_len # (i is in [1, max_seq_len])
 
-        # self.theta_vec = 
+        # self.theta_vec = torch.arange(d_k / 2)
+        half_dk = d_k // 2
+        theta_vec_half = torch.arange(half_dk * max_seq_len).reshape(max_seq_len, half_dk)
+        self.theta_vec = torch.stack((theta_vec_half, theta_vec_half), dim=-1).view(*(theta_vec_half.shape[:-1]), -1)
+        self.cosines = torch.cos(self.theta_vec)
+        self.sines = torch.sin(self.theta_vec)
+        # axis 0 : [1, max_seq_len]. axis 1: [0, d_k - 1]
         self.precomputed_rots = None # TODO: implement
         raise NotImplementedError
 
