@@ -125,10 +125,10 @@ class RotaryPositionalEmbedding(torch.nn.Module):
 
 def scaled_dot_product_attention(query, key, value, attn_mask=None):
     qk_t = einsum(query, key, "batch ... seq_q d_k, batch ... seq_k d_k -> batch ... seq_q seq_k")
-    pre_softmax = qk_t / torch.sqrt(qk_t.shape[-1])
-    if attn_mask:
+    pre_softmax = qk_t / torch.sqrt(torch.tensor(qk_t.shape[-1]))
+    if attn_mask is not None:
         attn_mask_recip = 1.0 / attn_mask
-        pre_softmax_masked = einsum(pre_softmax, attn_mask_recip, "batch ... seq_q seq_k, seq_q seq_k -> batch ... seq_q seq_k")
+        pre_softmax_masked = einsum(pre_softmax, attn_mask_recip, "batch ... seq_q seq_k, batch ... seq_q seq_k -> batch ... seq_q seq_k")
 
         pre_softmax_masked = torch.nan_to_num(
             pre_softmax_masked,
@@ -139,5 +139,5 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None):
     else:
         pre_softmax_masked = pre_softmax
     softmax_qkt = softmax(pre_softmax_masked, axis=-1)
-    result = einsum(softmax_qkt, value, "batch ... seq_q seq_k, seq_k d_v -> batch ... seq_q d_v")
+    result = einsum(softmax_qkt, value, "batch ... seq_q seq_k, batch ... seq_k d_v -> batch ... seq_q d_v")
     return result
