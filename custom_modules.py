@@ -96,14 +96,13 @@ class RotaryPositionalEmbedding(torch.nn.Module):
         self.d_k = d_k
         self.max_seq_len = max_seq_len # (i is in [1, max_seq_len])
 
-        # self.theta_vec = torch.arange(d_k / 2)
+        # axis 0 : [1, max_seq_len]. axis 1: [0, d_k - 1]
         half_dk = d_k // 2
         theta_vec_half = torch.arange(half_dk * max_seq_len).reshape(max_seq_len, half_dk)
         self.theta_vec = torch.stack((theta_vec_half, theta_vec_half), dim=-1).view(*(theta_vec_half.shape[:-1]), -1)
         self.cosines = torch.cos(self.theta_vec)
         self.sines = torch.sin(self.theta_vec)
-        # axis 0 : [1, max_seq_len]. axis 1: [0, d_k - 1]
-        self.precomputed_rots = None # TODO: implement
+        
         raise NotImplementedError
 
     def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
@@ -111,11 +110,13 @@ class RotaryPositionalEmbedding(torch.nn.Module):
         x_flip = torch.stack((-x[..., 1::2], x[..., 0::2]), dim=-1).view(*(x.shape[:-1]), -1)
 
         # x can be some collection of key or query vectors 
-        rots = self.precomputed_rots[token_positions]
+        # rots = self.precomputed_rots[token_positions]
+        relevant_cosines = self.cosines[token_positions]
+        relevant_sines = self.sines[token_positions]
 
-        # TODO: implement the below more efficiently
-        result = einsum(rots, x, "seq_len d_k d_k, ... seq_len d_k -> ... seq_len d_k")
-        return result
+        cosine_result = einsum(x, relevant_cosines, "... seq d_k, seq d_k -> ... seq d_k")
+        sine_result = einsum(x_flip, relevant_sines, "... seq d_k, seq d_k -> ... seq d_k")
+        return cosine_result + sine_result
     
 
 def scaled_dot_product_attention(query, key, value, attn_mask=None):
