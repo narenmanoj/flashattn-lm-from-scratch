@@ -99,7 +99,7 @@ class RotaryPositionalEmbedding(torch.nn.Module):
         # axis 0 : [1, max_seq_len]. axis 1: [0, d_k - 1]
         half_dk = d_k // 2
         # theta_vec_half = (1 + torch.arange(half_dk * max_seq_len)).reshape(max_seq_len, half_dk)
-        numerator_vec_half = einsum(torch.arange(max_seq_len) + 1, 
+        numerator_vec_half = einsum(torch.arange(max_seq_len), 
                                     torch.ones((max_seq_len, half_dk)), 
                                     "seq_len, seq_len d_k -> seq_len d_k")
         denominator_vec_half = torch.pow(theta, ((2 * (torch.arange(half_dk) + 1) - 2) / d_k).repeat(max_seq_len, 1))
@@ -118,17 +118,26 @@ class RotaryPositionalEmbedding(torch.nn.Module):
         relevant_cosines = self.cosines[token_positions]
         relevant_sines = self.sines[token_positions]
 
-        cosine_result = einsum(x, relevant_cosines, "... seq d_k, seq d_k -> ... seq d_k")
-        sine_result = einsum(x_flip, relevant_sines, "... seq d_k, seq d_k -> ... seq d_k")
+        cosine_result = einsum(x,
+                               relevant_cosines,
+                               "... seq d_k, seq d_k -> ... seq d_k")
+        sine_result = einsum(x_flip,
+                             relevant_sines,
+                             "... seq d_k, seq d_k -> ... seq d_k")
         return cosine_result + sine_result
 
 
 def scaled_dot_product_attention(query, key, value, attn_mask=None):
-    qk_t = einsum(query, key, "batch ... seq_q d_k, batch ... seq_k d_k -> batch ... seq_q seq_k")
-    pre_softmax = qk_t / torch.sqrt(torch.tensor(qk_t.shape[-1]))
+    qk_t = einsum(query,
+                  key,
+                  "batch ... seq_q d_k, batch ... seq_k d_k -> batch ... seq_q seq_k")
+    d_k = torch.tensor(query.shape[-1])
+    pre_softmax = qk_t / torch.sqrt(d_k)
     if attn_mask is not None:
         attn_mask_recip = 1.0 / attn_mask
-        pre_softmax_masked = einsum(pre_softmax, attn_mask_recip, "batch ... seq_q seq_k, batch ... seq_q seq_k -> batch ... seq_q seq_k")
+        pre_softmax_masked = einsum(pre_softmax,
+                                    attn_mask_recip,
+                                    "batch ... seq_q seq_k, batch ... seq_q seq_k -> batch ... seq_q seq_k")
 
         pre_softmax_masked = torch.nan_to_num(
             pre_softmax_masked,
@@ -139,5 +148,7 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None):
     else:
         pre_softmax_masked = pre_softmax
     softmax_qkt = softmax(pre_softmax_masked, axis=-1)
-    result = einsum(softmax_qkt, value, "batch ... seq_q seq_k, batch ... seq_k d_v -> batch ... seq_q d_v")
+    result = einsum(softmax_qkt,
+                    value,
+                    "batch ... seq_q seq_k, batch ... seq_k d_v -> batch ... seq_q d_v")
     return result
