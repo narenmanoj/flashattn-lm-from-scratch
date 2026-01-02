@@ -1,4 +1,4 @@
-from einops import einsum, reduce
+from einops import einsum, rearrange, reduce
 import numpy as np
 import torch
 
@@ -138,9 +138,14 @@ def scaled_dot_product_attention(query: torch.Tensor,
     pre_softmax = qk_t / torch.sqrt(d_k)
     if attn_mask is not None:
         attn_mask_recip = 1.0 / attn_mask
-        pre_softmax_masked = einsum(pre_softmax,
-                                    attn_mask_recip,
-                                    "batch ... seq_q seq_k, batch ... seq_q seq_k -> batch ... seq_q seq_k")
+        if len(attn_mask_recip.shape) > 2:
+            pre_softmax_masked = einsum(pre_softmax,
+                                        attn_mask_recip,
+                                        "batch ... seq_q seq_k, batch seq_q seq_k -> batch ... seq_q seq_k")
+        else:
+            pre_softmax_masked = einsum(pre_softmax,
+                                        attn_mask_recip,
+                                        "batch ... seq_q seq_k, seq_q seq_k -> batch ... seq_q seq_k")
 
         pre_softmax_masked = torch.nan_to_num(
             pre_softmax_masked,
@@ -157,9 +162,39 @@ def scaled_dot_product_attention(query: torch.Tensor,
     return result
 
 class MultiheadAttention(torch.nn.Module):
-    def __init__(self, embed_dim, num_heads):
+    def __init__(self, embed_dim, num_heads, rope_args={}, device=None):
         super(MultiheadAttention, self).__init__()
-        raise NotImplementedError
+        self.d_k = int(embed_dim / num_heads)
+        self.num_heads = num_heads
+        self.out_dim = num_heads * self.d_k
+        self.W_Q = Linear(in_features=embed_dim, out_features=self.out_dim, device=device)
+        self.W_K = Linear(in_features=embed_dim, out_features=self.out_dim, device=device)
+        self.W_V = Linear(in_features=embed_dim, out_features=self.out_dim, device=device)
+        self.W_O = Linear(in_features=self.out_dim, out_features=embed_dim, device=device)
+        # self.rope = RotaryPositionalEmbedding()
     
-    def forward(query, key, value, is_causal=False):
-        raise NotImplementedError
+    def forward(self, x: torch.Tensor, is_causal=False) -> torch.Tensor:
+        # slice and dice q k v, probably into another batch dimension
+        query = self.W_Q(x)
+        key = self.W_K(x)
+        value = self.W_V(x)
+        query = rearrange(query, "batch seq_k (h d_k) -> batch seq_k h d_k", h=self.num_heads, d_k=self.d_k)
+        key = rearrange(key, "batch seq_k (h d_k) -> batch seq_k h d_k", h=self.num_heads, d_k=self.d_k)
+        value = rearrange(value, "batch seq_k (h d_k) -> batch seq_k h d_k", h=self.num_heads, d_k=self.d_k)
+
+        query = rearrange(query, "batch seq_k h d_k -> batch h seq_k d_k")
+        key = rearrange(key, "batch seq_k h d_k -> batch h seq_k d_k")
+        value = rearrange(value, "batch seq_k h d_k -> batch h seq_k d_k")
+        # call scaled_dot_product_attention on the output with the causal mask
+        if is_causal:
+            seq_len = x.shape[1]
+            allones_mat = torch.ones((seq_len, seq_len))
+            mask = allones_mat - torch.triu(allones_mat) + torch.diag(torch.ones(seq_len))
+        else:
+            mask = None
+        breakpoint()
+        attn = scaled_dot_product_attention(query=query, key=key, value=value, attn_mask=mask)
+        attn = rearrange(attn, "batch h seq_k d_k -> batch seq_k h d_k")
+        attn = rearrange(attn, "batch seq_k h d_k -> batch seq_k (h d_k)")
+        result = self.W_O(attn)
+        return result
