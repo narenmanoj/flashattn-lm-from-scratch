@@ -3,7 +3,7 @@ import numpy as np
 import torch
 
 
-def _default_init(num_rows, num_cols, device=None, dtype=None):
+def _default_init(num_rows, num_cols, device=None, dtype=None) -> torch.Tensor:
     init_var = 2.0 / (num_rows + num_cols)
     trunc_up = 3 * np.sqrt(init_var)
     if num_cols > 0:
@@ -86,7 +86,7 @@ class SwiGLU(torch.nn.Module):
         self.W_3 = Linear(in_features=self.d_model, out_features=self.d_ff)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.W_2(silu(self.W_1(x)) * self.W_2(x))
+        return self.W_2(silu(self.W_1(x)) * self.W_3(x))
 
 
 class RotaryPositionalEmbedding(torch.nn.Module):
@@ -127,7 +127,10 @@ class RotaryPositionalEmbedding(torch.nn.Module):
         return cosine_result + sine_result
 
 
-def scaled_dot_product_attention(query, key, value, attn_mask=None):
+def scaled_dot_product_attention(query: torch.Tensor,
+                                 key: torch.Tensor,
+                                 value: torch.Tensor,
+                                 attn_mask: torch.Tensor | None = None) -> torch.Tensor:
     qk_t = einsum(query,
                   key,
                   "batch ... seq_q d_k, batch ... seq_k d_k -> batch ... seq_q seq_k")
@@ -152,3 +155,11 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None):
                     value,
                     "batch ... seq_q seq_k, batch ... seq_k d_v -> batch ... seq_q d_v")
     return result
+
+class MultiheadAttention(torch.nn.Module):
+    def __init__(self, embed_dim, num_heads):
+        super(MultiheadAttention, self).__init__()
+        raise NotImplementedError
+    
+    def forward(query, key, value, is_causal=False):
+        raise NotImplementedError
