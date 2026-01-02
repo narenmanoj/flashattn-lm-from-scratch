@@ -110,20 +110,20 @@ class RotaryPositionalEmbedding(torch.nn.Module):
         self.sines = torch.sin(self.theta_vec)
 
     def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
+        assert len(token_positions.shape) <= 2
         # x flipped
         x_flip = torch.stack((-x[..., 1::2], x[..., 0::2]), dim=-1).view(*(x.shape[:-1]), -1)
 
-        # x can be some collection of key or query vectors 
-        # rots = self.precomputed_rots[token_positions]
+        # x can be some collection of key or query vectors
         relevant_cosines = self.cosines[token_positions]
         relevant_sines = self.sines[token_positions]
 
         cosine_result = einsum(x,
                                relevant_cosines,
-                               "... seq d_k, seq d_k -> ... seq d_k")
+                               "... seq d_k, ... seq d_k -> ... seq d_k")
         sine_result = einsum(x_flip,
                              relevant_sines,
-                             "... seq d_k, seq d_k -> ... seq d_k")
+                             "... seq d_k, ... seq d_k -> ... seq d_k")
         return cosine_result + sine_result
 
 
@@ -162,7 +162,7 @@ def scaled_dot_product_attention(query: torch.Tensor,
     return result
 
 class MultiheadAttention(torch.nn.Module):
-    def __init__(self, embed_dim, num_heads, rope_args={}, device=None):
+    def __init__(self, embed_dim, num_heads, rope=None, device=None):
         super(MultiheadAttention, self).__init__()
         self.d_k = int(embed_dim / num_heads)
         self.num_heads = num_heads
@@ -171,13 +171,14 @@ class MultiheadAttention(torch.nn.Module):
         self.W_K = Linear(in_features=embed_dim, out_features=self.out_dim, device=device)
         self.W_V = Linear(in_features=embed_dim, out_features=self.out_dim, device=device)
         self.W_O = Linear(in_features=self.out_dim, out_features=embed_dim, device=device)
-        # self.rope = RotaryPositionalEmbedding()
+        self.rope = rope
     
-    def forward(self, x: torch.Tensor, is_causal=False) -> torch.Tensor:
-        # slice and dice q k v, probably into another batch dimension
+    def forward(self, x: torch.Tensor, is_causal=False, token_positions=None) -> torch.Tensor:
         query = self.W_Q(x)
         key = self.W_K(x)
         value = self.W_V(x)
+        
+        # slice and dice q k v, into another batch dimension, to support multihead
         query = rearrange(query, "batch seq_k (h d_k) -> batch seq_k h d_k", h=self.num_heads, d_k=self.d_k)
         key = rearrange(key, "batch seq_k (h d_k) -> batch seq_k h d_k", h=self.num_heads, d_k=self.d_k)
         value = rearrange(value, "batch seq_k (h d_k) -> batch seq_k h d_k", h=self.num_heads, d_k=self.d_k)
@@ -185,6 +186,10 @@ class MultiheadAttention(torch.nn.Module):
         query = rearrange(query, "batch seq_k h d_k -> batch h seq_k d_k")
         key = rearrange(key, "batch seq_k h d_k -> batch h seq_k d_k")
         value = rearrange(value, "batch seq_k h d_k -> batch h seq_k d_k")
+
+        if self.rope and token_positions is not None:
+            query = self.rope(query, token_positions)
+            key = self.rope(key, token_positions)
         # call scaled_dot_product_attention on the output with the causal mask
         if is_causal:
             seq_len = x.shape[1]
@@ -192,7 +197,6 @@ class MultiheadAttention(torch.nn.Module):
             mask = allones_mat - torch.triu(allones_mat) + torch.diag(torch.ones(seq_len))
         else:
             mask = None
-        breakpoint()
         attn = scaled_dot_product_attention(query=query, key=key, value=value, attn_mask=mask)
         attn = rearrange(attn, "batch h seq_k d_k -> batch seq_k h d_k")
         attn = rearrange(attn, "batch seq_k h d_k -> batch seq_k (h d_k)")
