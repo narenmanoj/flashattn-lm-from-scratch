@@ -261,4 +261,3 @@ class TransformerLM(torch.nn.Module):
         interm = self.last_linear(self.last_norm(interm))
         result = softmax(interm)
         return result
-        
