@@ -1,6 +1,7 @@
 from einops import einsum, rearrange, reduce
 import numpy as np
 import torch
+import math
 
 
 def _default_init(num_rows, num_cols, device=None, dtype=None) -> torch.Tensor:
@@ -252,6 +253,5 @@ class TransformerLM(torch.nn.Module):
         interm = self.embedding(in_indices)
         for layer in self.transformers:
             interm = layer(interm)
-        interm = self.last_linear(self.last_norm(interm))
-        result = softmax(interm)
+        result = self.last_linear(self.last_norm(interm))
         return result
