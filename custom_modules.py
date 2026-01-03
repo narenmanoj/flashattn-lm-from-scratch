@@ -1,7 +1,6 @@
 from einops import einsum, rearrange, reduce
 import numpy as np
 import torch
-import math
 
 
 def _default_init(num_rows, num_cols, device=None, dtype=None) -> torch.Tensor:
