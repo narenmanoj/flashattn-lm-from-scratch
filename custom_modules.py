@@ -1,6 +1,7 @@
 from einops import einsum, rearrange, reduce
 import numpy as np
 import torch
+import math
 
 
 def _default_init(num_rows, num_cols, device=None, dtype=None) -> torch.Tensor:
@@ -17,10 +18,10 @@ def silu(x: torch.Tensor) -> torch.Tensor:
     return x * torch.sigmoid(x)
 
 
-def softmax(x: torch.Tensor, axis=0) -> torch.Tensor:
-    vals, indices = torch.max(x, dim=axis, keepdim=True)
+def softmax(x: torch.Tensor, dim=0) -> torch.Tensor:
+    vals, indices = torch.max(x, dim=dim, keepdim=True)
     expx = torch.exp(x - vals.expand_as(x))
-    axis_sum = torch.sum(expx, dim=axis, keepdim=True).expand_as(x)
+    axis_sum = torch.sum(expx, dim=dim, keepdim=True).expand_as(x)
     return expx / axis_sum
 
 
@@ -134,28 +135,13 @@ def scaled_dot_product_attention(query: torch.Tensor,
     qk_t = einsum(query,
                   key,
                   "batch ... seq_q d_k, batch ... seq_k d_k -> batch ... seq_q seq_k")
-    d_k = torch.tensor(query.shape[-1])
-    pre_softmax = qk_t / torch.sqrt(d_k)
+    d_k = query.shape[-1]
+    pre_softmax = qk_t * (d_k ** -0.5)
     if attn_mask is not None:
-        attn_mask_recip = 1.0 / attn_mask
-        if len(attn_mask_recip.shape) > 2:
-            pre_softmax_masked = einsum(pre_softmax,
-                                        attn_mask_recip,
-                                        "batch ... seq_q seq_k, batch seq_q seq_k -> batch ... seq_q seq_k")
-        else:
-            pre_softmax_masked = einsum(pre_softmax,
-                                        attn_mask_recip,
-                                        "batch ... seq_q seq_k, seq_q seq_k -> batch ... seq_q seq_k")
-
-        pre_softmax_masked = torch.nan_to_num(
-            pre_softmax_masked,
-            nan=float("-inf"),
-            posinf=float("-inf"),
-            neginf=float("-inf")
-        )
+        pre_softmax_masked = pre_softmax.masked_fill(attn_mask == 0, float("-inf"))
     else:
         pre_softmax_masked = pre_softmax
-    softmax_qkt = softmax(pre_softmax_masked, axis=-1)
+    softmax_qkt = softmax(pre_softmax_masked, dim=-1)
     result = einsum(softmax_qkt,
                     value,
                     "batch ... seq_q seq_k, batch ... seq_k d_v -> batch ... seq_q d_v")
@@ -175,6 +161,9 @@ class MultiheadAttention(torch.nn.Module):
         self.rope = rope
     
     def forward(self, x: torch.Tensor, is_causal=False, token_positions=None) -> torch.Tensor:
+        batch_size = x.shape[0]
+        num_tokens = x.shape[1]
+    
         query = self.W_Q(x)
         key = self.W_K(x)
         value = self.W_V(x)
@@ -188,14 +177,18 @@ class MultiheadAttention(torch.nn.Module):
         key = rearrange(key, "batch seq_k h d_k -> batch h seq_k d_k")
         value = rearrange(value, "batch seq_k h d_k -> batch h seq_k d_k")
 
-        if self.rope and token_positions is not None:
+        if token_positions is None:
+            token_positions = torch.arange(num_tokens).repeat(batch_size).reshape((batch_size, num_tokens))
+
+        if self.rope is not None:
             query = self.rope(query, token_positions)
             key = self.rope(key, token_positions)
         # call scaled_dot_product_attention on the output with the causal mask
         if is_causal:
             seq_len = x.shape[1]
-            allones_mat = torch.ones((seq_len, seq_len))
-            mask = allones_mat - torch.triu(allones_mat) + torch.diag(torch.ones(seq_len))
+            mask = torch.tril(
+                torch.ones(seq_len, seq_len, device=x.device)
+            )
         else:
             mask = None
         attn = scaled_dot_product_attention(query=query, key=key, value=value, attn_mask=mask)
@@ -220,12 +213,14 @@ class PreNormTransformer(torch.nn.Module):
         self.rope = RotaryPositionalEmbedding(theta=rope_theta,
                                               d_k=(d_model // num_heads),
                                               max_seq_len=max_seq_len)
-        self.mha = MultiheadAttention(embed_dim=d_model, num_heads=num_heads)
+        self.mha = MultiheadAttention(embed_dim=d_model, num_heads=num_heads, rope=self.rope)
         self.swiglu = SwiGLU(d_model=d_model, d_ff=d_ff)
 
-    def forward(self, x: torch.Tensor, token_positions: torch.Tensor | None = None) -> torch.Tensor:
-        attention_plus_residual = self.mha(self.rms_1(x), is_causal=True, token_positions=token_positions) + x
-        result = self.swiglu(self.rms_2(attention_plus_residual)) + attention_plus_residual
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        attn = self.mha(self.rms_1(x), is_causal=True)
+        attention_plus_residual = attn + x
+        swiglu_val = self.swiglu(self.rms_2(attention_plus_residual))
+        result = swiglu_val + attention_plus_residual
         return result
 
 
@@ -254,8 +249,8 @@ class TransformerLM(torch.nn.Module):
 
         self.transformers = torch.nn.ModuleList(self.layers)
 
-    def forward(self, token_positions: torch.Tensor) -> torch.Tensor:
-        interm = self.embedding(token_positions)
+    def forward(self, in_indices: torch.Tensor) -> torch.Tensor:
+        interm = self.embedding(in_indices)
         for layer in self.transformers:
             interm = layer(interm)
         interm = self.last_linear(self.last_norm(interm))
