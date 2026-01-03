@@ -161,6 +161,7 @@ def scaled_dot_product_attention(query: torch.Tensor,
                     "batch ... seq_q seq_k, batch ... seq_k d_v -> batch ... seq_q d_v")
     return result
 
+
 class MultiheadAttention(torch.nn.Module):
     def __init__(self, embed_dim, num_heads, rope=None, device=None):
         super(MultiheadAttention, self).__init__()
@@ -202,3 +203,62 @@ class MultiheadAttention(torch.nn.Module):
         attn = rearrange(attn, "batch seq_k h d_k -> batch seq_k (h d_k)")
         result = self.W_O(attn)
         return result
+
+
+class PreNormTransformer(torch.nn.Module):
+    def __init__(self, d_model, num_heads, d_ff, rope_theta, max_seq_len):
+        super(PreNormTransformer, self).__init__()
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.d_ff = d_ff
+        self.rope_theta = rope_theta
+        self.max_seq_len = max_seq_len
+
+        # layers
+        self.rms_1 = RMSNorm(d_model=d_model)
+        self.rms_2 = RMSNorm(d_model=d_model)
+        self.rope = RotaryPositionalEmbedding(theta=rope_theta,
+                                              d_k=(d_model // num_heads),
+                                              max_seq_len=max_seq_len)
+        self.mha = MultiheadAttention(embed_dim=d_model, num_heads=num_heads)
+        self.swiglu = SwiGLU(d_model=d_model, d_ff=d_ff)
+
+    def forward(self, x: torch.Tensor, token_positions: torch.Tensor | None = None) -> torch.Tensor:
+        attention_plus_residual = self.mha(self.rms_1(x), is_causal=True, token_positions=token_positions) + x
+        result = self.swiglu(self.rms_2(attention_plus_residual)) + attention_plus_residual
+        return result
+
+
+class TransformerLM(torch.nn.Module):
+    def __init__(self, vocab_size, context_length, d_model, num_layers, num_heads, d_ff, rope_theta):
+        super(TransformerLM, self).__init__()
+        
+        self.vocab_size = vocab_size
+        self.context_length = context_length
+        self.d_model = d_model
+        self.num_layers = num_layers
+        self.num_heads = num_heads
+        self.d_ff = d_ff
+        self.rope_theta = rope_theta
+
+        self.embedding = Embedding(num_embeddings=vocab_size, embedding_dim=d_model)
+        self.layers = [None] * num_layers
+        for i in range(num_layers):
+            self.layers[i] = PreNormTransformer(d_model=d_model,
+                                                num_heads=num_heads,
+                                                d_ff=d_ff,
+                                                rope_theta=rope_theta,
+                                                max_seq_len=context_length)
+        self.last_norm = RMSNorm(d_model=d_model)
+        self.last_linear = Linear(in_features=d_model, out_features=vocab_size)
+
+        self.transformers = torch.nn.ModuleList(self.layers)
+
+    def forward(self, token_positions: torch.Tensor) -> torch.Tensor:
+        interm = self.embedding(token_positions)
+        for layer in self.transformers:
+            interm = layer(interm)
+        interm = self.last_linear(self.last_norm(interm))
+        result = softmax(interm)
+        return result
+        
