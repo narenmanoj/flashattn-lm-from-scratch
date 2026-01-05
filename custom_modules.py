@@ -1,7 +1,11 @@
+from collections.abc import Callable, Iterable
 from einops import einsum, rearrange, reduce
 from jaxtyping import Float, Int
+import math
 import numpy as np
 import torch
+from typing import Optional
+
 
 def _subtract_max(x: torch.Tensor, dim=0) -> torch.Tensor:
     vals, indices = torch.max(x, dim=dim, keepdim=True)
@@ -269,3 +273,33 @@ def cross_entropy(
     targets_blown = targets.reshape((len(targets), 1))
     sum_vals = inputs_demaxed.gather(dim=1, index=targets_blown)
     return -torch.mean(sum_vals.flatten() - log_sum_exps)
+
+
+class AdamW(torch.optim.Optimizer):
+    def __init__(self, params, first_moment, second_moment):
+        defaults = {
+            "first_moment": first_moment,
+            "second_moment": second_moment,
+        }
+        super().__init__(params, defaults)
+
+    def step(self, closure: Optional[Callable] = None):
+        loss = None if closure is None else closure() 
+        for group in self.param_groups:
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                state = self.state[p]
+                t = state.get("t", 0)
+                grad = p.grad.data
+                # in here, do all the work
+
+                state["t"] = t + 1
+
+
+def lr_cosine_schedule(t, alpha_max, alpha_min, t_w, t_c):
+    if t < t_w:
+        return t / t_w * alpha_max
+    if t > t_c:
+        return alpha_min
+    return alpha_min + 0.5 * (1 + math.cos((t - t_w) / (t_c - t_w) * math.pi)) * (alpha_max - alpha_min)
