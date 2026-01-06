@@ -81,7 +81,7 @@ class RMSNorm(torch.nn.Module):
 
 
 class SwiGLU(torch.nn.Module):
-    def __init__(self, d_model: int, d_ff: int | None = None):
+    def __init__(self, d_model: int, d_ff: int | None = None, device=None):
         super(SwiGLU, self).__init__()
         if not d_ff:
             self.d_ff = int(8 / 3 * d_model)
@@ -89,9 +89,9 @@ class SwiGLU(torch.nn.Module):
             self.d_ff = d_ff
         self.d_model = d_model
 
-        self.W_1 = Linear(in_features=self.d_model, out_features=self.d_ff)
-        self.W_2 = Linear(in_features=self.d_ff, out_features=self.d_model)
-        self.W_3 = Linear(in_features=self.d_model, out_features=self.d_ff)
+        self.W_1 = Linear(in_features=self.d_model, out_features=self.d_ff, device=device)
+        self.W_2 = Linear(in_features=self.d_ff, out_features=self.d_model, device=device)
+        self.W_3 = Linear(in_features=self.d_model, out_features=self.d_ff, device=device)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.W_2(silu(self.W_1(x)) * self.W_3(x))
@@ -107,10 +107,10 @@ class RotaryPositionalEmbedding(torch.nn.Module):
         # axis 0 : [1, max_seq_len]. axis 1: [0, d_k - 1]
         half_dk = d_k // 2
         # theta_vec_half = (1 + torch.arange(half_dk * max_seq_len)).reshape(max_seq_len, half_dk)
-        numerator_vec_half = einsum(torch.arange(max_seq_len), 
-                                    torch.ones((max_seq_len, half_dk)), 
+        numerator_vec_half = einsum(torch.arange(max_seq_len, device=device), 
+                                    torch.ones((max_seq_len, half_dk), device=device), 
                                     "seq_len, seq_len d_k -> seq_len d_k")
-        denominator_vec_half = torch.pow(theta, ((2 * (torch.arange(half_dk) + 1) - 2) / d_k).repeat(max_seq_len, 1))
+        denominator_vec_half = torch.pow(theta, ((2 * (torch.arange(half_dk, device=device) + 1) - 2) / d_k).repeat(max_seq_len, 1))
 
         theta_vec_half = numerator_vec_half / denominator_vec_half
         self.theta_vec = torch.stack((theta_vec_half, theta_vec_half), dim=-1).view(*(theta_vec_half.shape[:-1]), -1)
@@ -185,7 +185,7 @@ class MultiheadAttention(torch.nn.Module):
         value = rearrange(value, "batch seq_k h d_k -> batch h seq_k d_k")
 
         if token_positions is None:
-            token_positions = torch.arange(num_tokens).repeat(batch_size).reshape((batch_size, num_tokens))
+            token_positions = torch.arange(num_tokens, device=x.device).repeat(batch_size).reshape((batch_size, num_tokens))
 
         if self.rope is not None:
             query = self.rope(query, token_positions)
@@ -206,7 +206,7 @@ class MultiheadAttention(torch.nn.Module):
 
 
 class PreNormTransformer(torch.nn.Module):
-    def __init__(self, d_model, num_heads, d_ff, rope_theta, max_seq_len):
+    def __init__(self, d_model, num_heads, d_ff, rope_theta, max_seq_len, device=None):
         super(PreNormTransformer, self).__init__()
         self.d_model = d_model
         self.num_heads = num_heads
@@ -219,9 +219,12 @@ class PreNormTransformer(torch.nn.Module):
         self.rms_2 = RMSNorm(d_model=d_model)
         self.rope = RotaryPositionalEmbedding(theta=rope_theta,
                                               d_k=(d_model // num_heads),
-                                              max_seq_len=max_seq_len)
-        self.mha = MultiheadAttention(embed_dim=d_model, num_heads=num_heads, rope=self.rope)
-        self.swiglu = SwiGLU(d_model=d_model, d_ff=d_ff)
+                                              max_seq_len=max_seq_len,
+                                              device=device)
+        self.mha = MultiheadAttention(embed_dim=d_model,
+                                      num_heads=num_heads,rope=self.rope,
+                                      device=device)
+        self.swiglu = SwiGLU(d_model=d_model, d_ff=d_ff, device=device)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         attn = self.mha(self.rms_1(x), is_causal=True)
@@ -232,7 +235,7 @@ class PreNormTransformer(torch.nn.Module):
 
 
 class TransformerLM(torch.nn.Module):
-    def __init__(self, vocab_size, context_length, d_model, num_layers, num_heads, d_ff, rope_theta):
+    def __init__(self, vocab_size, context_length, d_model, num_layers, num_heads, d_ff, rope_theta, device=None):
         super(TransformerLM, self).__init__()
         
         self.vocab_size = vocab_size
@@ -243,16 +246,17 @@ class TransformerLM(torch.nn.Module):
         self.d_ff = d_ff
         self.rope_theta = rope_theta
 
-        self.embedding = Embedding(num_embeddings=vocab_size, embedding_dim=d_model)
+        self.embedding = Embedding(num_embeddings=vocab_size, embedding_dim=d_model, device=device)
         self.layers = [None] * num_layers
         for i in range(num_layers):
             self.layers[i] = PreNormTransformer(d_model=d_model,
                                                 num_heads=num_heads,
                                                 d_ff=d_ff,
                                                 rope_theta=rope_theta,
-                                                max_seq_len=context_length)
-        self.last_norm = RMSNorm(d_model=d_model)
-        self.last_linear = Linear(in_features=d_model, out_features=vocab_size)
+                                                max_seq_len=context_length,
+                                                device=device)
+        self.last_norm = RMSNorm(d_model=d_model, device=device)
+        self.last_linear = Linear(in_features=d_model, out_features=vocab_size, device=device)
 
         self.transformers = torch.nn.ModuleList(self.layers)
 
@@ -304,8 +308,8 @@ class AdamW(torch.optim.Optimizer):
                 grad = p.grad.data
 
                 # in here, do all the work
-                first_moment = state.get("first_moment", torch.zeros(grad.shape))
-                second_moment = state.get("second_moment", torch.zeros(grad.shape))
+                first_moment = state.get("first_moment", torch.zeros(grad.shape, device=p.grad.device))
+                second_moment = state.get("second_moment", torch.zeros(grad.shape, device=p.grad.device))
 
                 first_moment = beta_1 * first_moment + (1 - beta_1) * grad
                 second_moment = beta_2 * second_moment + (1 - beta_2) * torch.square(grad)
