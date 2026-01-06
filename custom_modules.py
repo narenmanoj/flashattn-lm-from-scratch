@@ -215,8 +215,8 @@ class PreNormTransformer(torch.nn.Module):
         self.max_seq_len = max_seq_len
 
         # layers
-        self.rms_1 = RMSNorm(d_model=d_model)
-        self.rms_2 = RMSNorm(d_model=d_model)
+        self.rms_1 = RMSNorm(d_model=d_model, device=device)
+        self.rms_2 = RMSNorm(d_model=d_model, device=device)
         self.rope = RotaryPositionalEmbedding(theta=rope_theta,
                                               d_k=(d_model // num_heads),
                                               max_seq_len=max_seq_len,
