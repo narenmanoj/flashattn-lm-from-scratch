@@ -90,6 +90,8 @@ if __name__ == "__main__":
     optimizer = AdamW(model.parameters())
     loss_fn = cross_entropy
 
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"Total number of parameters: {total_params}")
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     tb_writer = SummaryWriter('runs/the_verdict_{}'.format(timestamp))
 
