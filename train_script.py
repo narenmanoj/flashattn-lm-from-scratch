@@ -93,8 +93,6 @@ if __name__ == "__main__":
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     tb_writer = SummaryWriter('runs/the_verdict_{}'.format(timestamp))
 
-    print(next(model.parameters()).device)
-
     for epoch_it in tqdm(range(hyperparams["num_epochs"])):
         train_one_epoch(epoch_index=epoch_it,
                         num_epochs=hyperparams["num_epochs"],
