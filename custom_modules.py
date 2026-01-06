@@ -125,13 +125,15 @@ class RotaryPositionalEmbedding(torch.nn.Module):
         # x can be some collection of key or query vectors
         relevant_cosines = self.cosines[token_positions]
         relevant_sines = self.sines[token_positions]
-
-        cosine_result = einsum(x,
-                               relevant_cosines,
-                               "batch ... seq d_k, batch seq d_k -> batch ... seq d_k")
-        sine_result = einsum(x_flip,
-                             relevant_sines,
-                             "batch ... seq d_k, batch seq d_k -> batch ... seq d_k")
+        # breakpoint()
+        if len(relevant_cosines.shape) == 2:
+            einsum_str = "batch ... seq d_k, seq d_k -> batch ... seq d_k"
+        elif len(relevant_cosines.shape) == 3:
+            einsum_str = "batch ... seq d_k, batch seq d_k -> batch ... seq d_k"
+        else:
+            einsum_str = "batch ... seq d_k, batch ... seq d_k -> batch ... seq d_k"
+        cosine_result = einsum(x, relevant_cosines, einsum_str)
+        sine_result = einsum(x_flip, relevant_sines, einsum_str)
         return cosine_result + sine_result
 
 
