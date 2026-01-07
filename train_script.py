@@ -43,7 +43,7 @@ def read_json_to_dict(filename):
 
 
 @torch.no_grad()
-def validate(model, dataloader, loss_fn, device, subsample_frac: float = 1.0):
+def validate(model, dataloader, loss_fn, device, subsample_frac: float = 0.1):
     """
     Evaluate the model on the validation set.
     
