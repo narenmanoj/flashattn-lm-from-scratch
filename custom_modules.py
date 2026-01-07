@@ -26,8 +26,8 @@ def silu(x: torch.Tensor) -> torch.Tensor:
     return x * torch.sigmoid(x)
 
 
-def softmax(x: torch.Tensor, dim=0) -> torch.Tensor:
-    expx = torch.exp(_subtract_max(x, dim=dim))
+def softmax(x: torch.Tensor, dim=0, temperature=1) -> torch.Tensor:
+    expx = torch.exp(_subtract_max(x, dim=dim) / temperature)
     axis_sum = torch.sum(expx, dim=dim, keepdim=True).expand_as(x)
     return expx / axis_sum
 
@@ -268,6 +268,20 @@ class TransformerLM(torch.nn.Module):
             interm = layer(interm)
         result = self.last_linear(self.last_norm(interm))
         return result
+    
+    def decode(self, in_indices: torch.Tensor, temperature: float = 1, max_tokens: int=100, topk: int=0) -> torch.Tensor:
+        with torch.no_grad():
+            out_indices = in_indices
+            for i in range(max_tokens):
+                logits = self.forward(out_indices)
+                distro = softmax(logits, dim=-1, temperature=temperature)[:, -1]
+                if topk > 0:
+                    distro = torch.topk(input=distro, k=topk, dim=-1)
+                next_tok = torch.multinomial(input=distro, num_samples=1)
+                out_indices = torch.cat((out_indices, next_tok), dim=1)
+                if out_indices.shape[-1] > self.context_length:
+                    out_indices = out_indices[:, 1:]
+            return out_indices
 
 
 def cross_entropy(

@@ -42,7 +42,7 @@ def train_one_epoch(epoch_index, num_epochs, tb_writer, loss_fn, optimizer, mode
         running_loss += loss.item()
         if i % print_every == print_every - 1:
             last_loss = running_loss / print_every # loss per batch
-            print(f"  batch {i + 1} loss: {last_loss}")
+            tqdm.write(f"  batch {i + 1} loss: {last_loss}")
             tb_x = epoch_index * len(dataloader) + i + 1
             tb_writer.add_scalar("Loss/train", last_loss, tb_x)
             running_loss = 0.
@@ -62,7 +62,7 @@ if __name__ == "__main__":
         "d_ff": 1344,
         "rope_theta": 1e4,
         "context_length": 256,
-        "num_epochs": 3,
+        "num_epochs": 5,
     }
 
     with open(hyperparams["dataset_file"], "r", encoding="utf-8") as f:
@@ -103,3 +103,13 @@ if __name__ == "__main__":
                         optimizer=optimizer,
                         model=model,
                         dataloader=dataloader)
+    test_messages = [
+        "test text",
+    ]
+    max_tokens = 20
+    tok_msg = torch.tensor(tokenizer.encode_batch(test_messages, allowed_special={"<|endoftext|>"}), device=device)
+    print(f"token ids = {tok_msg}")
+    result_toks = model.decode(tok_msg, temperature=1, max_tokens=max_tokens)
+    result = tokenizer.decode_batch(result_toks.tolist())
+
+    print(result)
