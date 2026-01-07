@@ -4,7 +4,7 @@ from torch.utils.data import Dataset, DataLoader
 
 class GPTDatasetV1(Dataset):
     def __init__(self, txt, tokenizer, max_length, stride, device=None):
-        tokenized = tokenizer.encode(txt)
+        tokenized = tokenizer.encode(txt, allowed_special={'<|endoftext|>'})
         tsr = torch.tensor
         self.Xy_pairs = [(tsr(tokenized[i: i + max_length], device=device), 
                           tsr(tokenized[i + max_length: i + max_length + 1], device=device)) 
