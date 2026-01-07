@@ -43,44 +43,41 @@ def read_json_to_dict(filename):
 
 
 @torch.no_grad()
-def validate(model, dataloader, loss_fn, device, subsample_frac: float = 0.1):
+def validate(model, dataloader, loss_fn, device, num_batches: int = 5):
     """
-    Evaluate the model on the validation set.
-    
+    Evaluate the model on a subset of the validation set.
+
     Parameters
     ----------
     model : nn.Module
         The transformer model.
     dataloader : DataLoader
-        Validation dataloader.
+        Validation dataloader (should be shuffled if you want randomness).
     loss_fn : callable
         Loss function (e.g., cross_entropy).
     device : torch.device
         Device for computation.
-    subsample_frac : float, optional
-        Fraction of batches to evaluate on (0 < subsample_frac <= 1).
-        Defaults to 1.0 (full dataset).
-    
+    num_batches : int
+        Number of batches from the dataloader to evaluate on.
+
     Returns
     -------
     float
-        Average validation loss (unbiased estimate if subsampling < 1).
+        Average validation loss over the sampled batches.
     """
     model.eval()
     total_loss = 0.0
     count = 0
 
-    # Determine which batches to sample
-    if subsample_frac < 1.0:
-        all_indices = list(range(len(dataloader)))
-        subsample_size = max(1, int(len(dataloader) * subsample_frac))
-        sampled_indices = set(random.sample(all_indices, subsample_size))
-    else:
-        sampled_indices = None  # use all batches
+    # Create an iterator over the dataloader
+    val_iter = iter(dataloader)
+    batches_done = 0
 
-    for i, batch in enumerate(dataloader):
-        if sampled_indices is not None and i not in sampled_indices:
-            continue  # skip this batch
+    while batches_done < num_batches:
+        try:
+            batch = next(val_iter)
+        except StopIteration:
+            break  # ran out of batches
 
         inputs = batch["input_ids"].to(device)
         labels = batch["labels"].to(device)
@@ -90,6 +87,7 @@ def validate(model, dataloader, loss_fn, device, subsample_frac: float = 0.1):
 
         total_loss += loss.item() * inputs.size(0)
         count += inputs.size(0)
+        batches_done += 1
 
     model.train()
     return total_loss / count if count > 0 else float("nan")
@@ -192,7 +190,7 @@ if __name__ == "__main__":
     val_dataloader = DataLoader(
         val_dataset,
         batch_size=hyperparams.get("batch_size", 8),
-        shuffle=False,  # no shuffle for validation
+        shuffle=True,  # no shuffle for validation
         num_workers=4,
         pin_memory=(device.type == "cuda"),
     )
