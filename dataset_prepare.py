@@ -36,6 +36,7 @@ class ShiftedCausalLMDataset(Dataset):
         os.makedirs(cache_dir, exist_ok=True)
         safe_name = dataset_name.lower()
         self.cache_path = os.path.join(cache_dir, f"{safe_name}_{split}_tokenized.pt")
+        
 
         # -------------------------
         # 3️⃣ Load cached dataset if exists
@@ -43,6 +44,7 @@ class ShiftedCausalLMDataset(Dataset):
         if os.path.exists(self.cache_path):
             print(f"Loading tokenized dataset from {self.cache_path}")
             self.dataset_data = torch.load(self.cache_path, weights_only=False)  # list of dicts with 'input_ids'
+            print(f"Loaded {len(self.dataset_data)} examples from cache")
             return
 
         # -------------------------
@@ -88,6 +90,10 @@ class ShiftedCausalLMDataset(Dataset):
         torch.save(tokenized_list, self.cache_path)
 
         self.dataset_data = tokenized_list
+        print(f"Split: {split}")
+        print(f"Number of tokenized chunks: {len(tokenized_list)}")
+        print(f"Example token length: {len(tokenized_list[0]['input_ids'])}")
+
 
     # -------------------------
     # Dataset interface
