@@ -69,6 +69,7 @@ if __name__ == "__main__":
         "Are you kidding me",
         "So why does she hate her student",
         "The supervisor said I can fire you right now and then the supervisor walked over to him and then the supervisor told him I might even do it",
+        "My friend asked the moose why he was on the road",
     ]
     max_tokens = 200
     for msg in test_messages:
