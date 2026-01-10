@@ -172,12 +172,20 @@ if __name__ == "__main__":
 
     tokenizer = tiktoken.get_encoding("gpt2")
 
-    vocab_size = tokenizer.n_vocab
+    vocab_size = hyperparams.get("vocab_size", tokenizer.n_vocab)
 
     dataset = build_dataset(
         name=hyperparams["dataset_name"],   # e.g. "tinystories" or "openwebtext"
         seq_len=hyperparams["context_length"],
         split="train",
+    )
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=hyperparams.get("batch_size", 8),
+        shuffle=True,
+        num_workers=4,
+        pin_memory=(device.type == "cuda"),
     )
 
     # Validation dataset
@@ -195,22 +203,14 @@ if __name__ == "__main__":
         pin_memory=(device.type == "cuda"),
     )
 
-    dataloader = DataLoader(
-        dataset,
-        batch_size=hyperparams.get("batch_size", 8),
-        shuffle=True,
-        num_workers=4,
-        pin_memory=(device.type == "cuda"),
-    )
-    
     model = TransformerLM(vocab_size=vocab_size, 
-                        context_length=hyperparams["context_length"],
-                        d_model=hyperparams["d_model"],
-                        num_layers=hyperparams["num_layers"],
-                        num_heads=hyperparams["num_heads"],
-                        d_ff=hyperparams["d_ff"],
-                        rope_theta=hyperparams["rope_theta"],
-                        device=device)
+                          context_length=hyperparams["context_length"],
+                          d_model=hyperparams["d_model"],
+                          num_layers=hyperparams["num_layers"],
+                          num_heads=hyperparams["num_heads"],
+                          d_ff=hyperparams["d_ff"],
+                          rope_theta=hyperparams["rope_theta"],
+                          device=device)
     optimizer = AdamW(model.parameters())
     loss_fn = cross_entropy
     current_epoch = 0
