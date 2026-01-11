@@ -149,7 +149,7 @@ def scaled_dot_product_attention(query: torch.Tensor,
         d_k = query.shape[-1]
         pre_softmax = qk_t * (d_k ** -0.5)
         if attn_mask is not None:
-            pre_softmax_masked = pre_softmax.masked_fill(attn_mask == 0, float("-inf"))
+            pre_softmax_masked = pre_softmax.masked_fill(~attn_mask, float("-inf"))
         else:
             pre_softmax_masked = pre_softmax
     with nvtx.range("computing softmax"):
@@ -174,9 +174,10 @@ class MultiheadAttention(torch.nn.Module):
         self.rope = rope
         self.max_seq_len = max_seq_len
         if max_seq_len:
-            self.mask = torch.tril(
-                torch.ones(max_seq_len, max_seq_len, device=device)
+            mask = torch.tril(
+                torch.ones(max_seq_len, max_seq_len, device=device, dtype=torch.bool)
             )
+            self.register_buffer("mask", mask, persistent=False)
         else:
             self.mask = None
     
@@ -204,15 +205,16 @@ class MultiheadAttention(torch.nn.Module):
             query = self.rope(query, token_positions)
             key = self.rope(key, token_positions)
         # call scaled_dot_product_attention on the output with the causal mask
-        seq_len = x.shape[1]
-        if is_causal and self.max_seq_len is not None:
-            mask = self.mask[:seq_len, :seq_len]
-        elif is_causal:
-            mask = torch.tril(
-                torch.ones(seq_len, seq_len, device=x.device)
-            )
-        else:
-            mask = None
+        with nvtx.range("getting the causal mask"):
+            seq_len = x.shape[1]
+            if is_causal and self.max_seq_len is not None:
+                mask = self.mask[:seq_len, :seq_len]
+            elif is_causal:
+                mask = torch.tril(
+                    torch.ones(seq_len, seq_len, device=x.device, dtype=torch.bool)
+                )
+            else:
+                mask = None
         attn = scaled_dot_product_attention(query=query, key=key, value=value, attn_mask=mask)
         attn = rearrange(attn, "batch h seq_k d_k -> batch seq_k h d_k")
         attn = rearrange(attn, "batch seq_k h d_k -> batch seq_k (h d_k)")
