@@ -107,7 +107,6 @@ class RotaryPositionalEmbedding(torch.nn.Module):
 
         # axis 0 : [1, max_seq_len]. axis 1: [0, d_k - 1]
         half_dk = d_k // 2
-        # theta_vec_half = (1 + torch.arange(half_dk * max_seq_len)).reshape(max_seq_len, half_dk)
         numerator_vec_half = einsum(torch.arange(max_seq_len, device=device), 
                                     torch.ones((max_seq_len, half_dk), device=device), 
                                     "seq_len, seq_len d_k -> seq_len d_k")
@@ -115,8 +114,11 @@ class RotaryPositionalEmbedding(torch.nn.Module):
 
         theta_vec_half = numerator_vec_half / denominator_vec_half
         self.theta_vec = torch.stack((theta_vec_half, theta_vec_half), dim=-1).view(*(theta_vec_half.shape[:-1]), -1)
-        self.cosines = torch.cos(self.theta_vec)
-        self.sines = torch.sin(self.theta_vec)
+        cosines = torch.cos(self.theta_vec)
+        sines = torch.sin(self.theta_vec)
+
+        self.register_buffer("cosines", cosines, persistent=False)
+        self.register_buffer("sines", sines, persistent=False)
 
     def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
         assert len(token_positions.shape) <= 2
