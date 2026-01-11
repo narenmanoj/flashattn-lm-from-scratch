@@ -33,12 +33,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
     hyperparams = read_json_to_dict(args.config)
     batch_size = hyperparams["batch_size"]
-    vocab_size = hyperparams["vocab_size"], 
-    context_length = hyperparams["context_length"],
-    d_model = hyperparams["d_model"],
-    num_layers = hyperparams["num_layers"],
-    num_heads = hyperparams["num_heads"],
-    d_ff = hyperparams["d_ff"],
+    vocab_size = hyperparams["vocab_size"]
+    context_length = hyperparams["context_length"]
+    d_model = hyperparams["d_model"]
+    num_layers = hyperparams["num_layers"]
+    num_heads = hyperparams["num_heads"]
+    d_ff = hyperparams["d_ff"]
     rope_theta = hyperparams["rope_theta"]
 
     model = TransformerLM(vocab_size=vocab_size, 
