@@ -320,7 +320,6 @@ def cross_entropy(
     return nll.mean()
 
 
-
 class AdamW(torch.optim.Optimizer):
     def __init__(self, params, lr=1e-3, weight_decay=0.01, betas=(0.9, 0.999), eps=1e-8):
         defaults = {
@@ -335,6 +334,7 @@ class AdamW(torch.optim.Optimizer):
         self.betas = betas
         self.eps = eps
 
+    @nvtx.range("AdamW step")
     def step(self, closure: Optional[Callable] = None):
         loss = None if closure is None else closure()
         alpha = self.lr
