@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import timeit
 import torch
+import torch.cuda.nvtx as nvtx
 from tqdm import tqdm
 
 from custom_modules import (
@@ -15,20 +16,23 @@ from custom_modules import (
 
 from train_script import read_json_to_dict
 
-def generate_batch(vocab_size: int, batch_size: int, seq_len: int) -> torch.Tensor:
-    data = torch.randint(low=0, high=vocab_size, size=(batch_size, seq_len))
+def generate_batch(vocab_size: int, batch_size: int, seq_len: int, device) -> torch.Tensor:
+    data = torch.randint(low=0, high=vocab_size, size=(batch_size, seq_len), device=device)
     labels = data[:, 1:]
-    new_labels = torch.randint(low=0, high=vocab_size, size=(batch_size, 1))
+    new_labels = torch.randint(low=0, high=vocab_size, size=(batch_size, 1), device=device)
     labels = torch.cat((labels, new_labels), dim=1)
     return data, labels
 
 def forward_pass(data: torch.Tensor, labels: torch.Tensor, model: torch.nn.Module, use_cuda: bool) -> torch.Tensor:
-    outputs = model(data)
-    loss = cross_entropy(
-        outputs.reshape(-1, outputs.size(-1)),
-        labels.reshape(-1),
-    )
-    loss.backward()
+    with nvtx.range("forward pass"):
+        outputs = model(data)
+    with nvtx.range("computing loss"):
+        loss = cross_entropy(
+            outputs.reshape(-1, outputs.size(-1)),
+            labels.reshape(-1),
+        )
+    with nvtx.range("backwards pass"):
+        loss.backward()
     if use_cuda:
         torch.cuda.synchronize()
 
@@ -62,20 +66,23 @@ if __name__ == "__main__":
     print(f"Total number of parameters: {total_params}")
 
     test_sample, test_label = generate_batch(vocab_size=vocab_size,
-                                 batch_size=batch_size,
-                                 seq_len=context_length)
+                                             batch_size=batch_size,
+                                             seq_len=context_length,
+                                             device=device)
     
     ## Warmup phase
-    for warmup_idx in range(hyperparams["num_warmups"]):
-        model(test_sample)
-    if use_cuda:
-        torch.cuda.synchronize()
+    with nvtx.range("warmup"):
+        for warmup_idx in range(hyperparams["num_warmups"]):
+            model(test_sample)
+        if use_cuda:
+            torch.cuda.synchronize()
 
     ## Measurement phase
     setup_stmt = "from __main__ import forward_pass"
     main_stmt = partial(forward_pass, data=test_sample, labels=test_label, model=model, use_cuda=use_cuda)
-    execution_time = timeit.repeat(stmt=main_stmt,
-                                   setup=setup_stmt,
-                                   repeat=hyperparams["num_measurements"],
-                                   number=1)
+    with nvtx.range("benchmark"):
+        execution_time = timeit.repeat(stmt=main_stmt,
+                                    setup=setup_stmt,
+                                    repeat=hyperparams["num_measurements"],
+                                    number=1)
     print(f"Execution times: {execution_time}")

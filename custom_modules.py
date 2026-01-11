@@ -4,6 +4,7 @@ from jaxtyping import Float, Int
 import math
 import numpy as np
 import torch
+import torch.cuda.nvtx as nvtx
 from typing import Optional
 
 
@@ -136,24 +137,27 @@ class RotaryPositionalEmbedding(torch.nn.Module):
         sine_result = einsum(x_flip, relevant_sines, einsum_str)
         return cosine_result + sine_result
 
-
+@nvtx.range("scaled dot product attention")
 def scaled_dot_product_attention(query: torch.Tensor,
                                  key: torch.Tensor,
                                  value: torch.Tensor,
                                  attn_mask: torch.Tensor | None = None) -> torch.Tensor:
-    qk_t = einsum(query,
-                  key,
-                  "batch ... seq_q d_k, batch ... seq_k d_k -> batch ... seq_q seq_k")
-    d_k = query.shape[-1]
-    pre_softmax = qk_t * (d_k ** -0.5)
-    if attn_mask is not None:
-        pre_softmax_masked = pre_softmax.masked_fill(attn_mask == 0, float("-inf"))
-    else:
-        pre_softmax_masked = pre_softmax
-    softmax_qkt = softmax(pre_softmax_masked, dim=-1)
-    result = einsum(softmax_qkt,
-                    value,
-                    "batch ... seq_q seq_k, batch ... seq_k d_v -> batch ... seq_q d_v")
+    with nvtx.range("computing attention scores"):
+        qk_t = einsum(query,
+                    key,
+                    "batch ... seq_q d_k, batch ... seq_k d_k -> batch ... seq_q seq_k")
+        d_k = query.shape[-1]
+        pre_softmax = qk_t * (d_k ** -0.5)
+        if attn_mask is not None:
+            pre_softmax_masked = pre_softmax.masked_fill(attn_mask == 0, float("-inf"))
+        else:
+            pre_softmax_masked = pre_softmax
+    with nvtx.range("computing softmax"):
+        softmax_qkt = softmax(pre_softmax_masked, dim=-1)
+    with nvtx.range("computing final matmul"):
+        result = einsum(softmax_qkt,
+                        value,
+                        "batch ... seq_q seq_k, batch ... seq_k d_v -> batch ... seq_q d_v")
     return result
 
 
@@ -295,22 +299,23 @@ def cross_entropy(
     inputs: logits (N, V)
     targets: target indices (N,)
     """
-    # Mask out ignored targets
-    valid_mask = targets != ignore_index
-    if valid_mask.sum() == 0:
-        return torch.tensor(0.0, device=inputs.device, requires_grad=True)
+    with nvtx.range("cross entropy"):
+        # Mask out ignored targets
+        valid_mask = targets != ignore_index
+        if valid_mask.sum() == 0:
+            return torch.tensor(0.0, device=inputs.device, requires_grad=True)
 
-    inputs = inputs[valid_mask]
-    targets = targets[valid_mask]
+        inputs = inputs[valid_mask]
+        targets = targets[valid_mask]
 
-    # LogSoftmax (numerically stable)
-    inputs_demaxed = _subtract_max(inputs, dim=-1)
-    log_probs = inputs_demaxed - torch.log(
-        torch.sum(torch.exp(inputs_demaxed), dim=-1, keepdim=True)
-    )
+        # LogSoftmax (numerically stable)
+        inputs_demaxed = _subtract_max(inputs, dim=-1)
+        log_probs = inputs_demaxed - torch.log(
+            torch.sum(torch.exp(inputs_demaxed), dim=-1, keepdim=True)
+        )
 
-    # Negative log likelihood
-    nll = -torch.gather(log_probs, dim=-1, index=targets.unsqueeze(-1)).squeeze(-1)
+        # Negative log likelihood
+        nll = -torch.gather(log_probs, dim=-1, index=targets.unsqueeze(-1)).squeeze(-1)
 
     return nll.mean()
 
