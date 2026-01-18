@@ -35,6 +35,8 @@ def flash_fwd_kernel(
         order=(1, 0),
     )
 
+    N_TILES_KV = math.ceil(N_KEYS / K_TILE_SIZE)
+
     # K_block_ptr = tl.make_block_ptr(
     #     K_ptr + batch_index * stride_kb,
     #     shape=(N_KEYS, D),
@@ -68,12 +70,22 @@ class TritonAttention(torch.autograd.Function):
         N_QUERIES = query.shape[-2]
         N_KEYS = key.shape[-2]
 
-        N_TILES_Q = math.ceil(N_QUERIES / ctx.Q_TILE_SIZE)
-        N_TILES_KV = math.ceil(N_KEYS / ctx.K_TILE_SIZE)
+        ctx.N_TILES_Q = math.ceil(N_QUERIES / ctx.Q_TILE_SIZE)
+        
         O = torch.empty_like(query)
-        # flash_fwd_kernel[(*N_BATCHES, ctx.N_TILES_Q, ctx.N_TILES_KV)](
-
-        # )
+        L = torch.empty(query.shape[:-1])
+        flash_fwd_kernel[(ctx.N_TILES_Q, N_BATCHES)](
+            query, key, value, O, L,
+            query.stride(0), query.stride(1), query.stride(2),
+            key.stride(0), key.stride(1), key.stride(2),
+            value.stride(0), value.stride(1), value.stride(2),
+            O.stride(0), O.stride(1), O.stride(2),
+            L.stride(0), L.stride(1),
+            N_QUERIES, N_KEYS,
+            scale, D, ctx.Q_TILE_SIZE, ctx.K_TILE_SIZE
+        )
+        to_save = [L, query, key, value, O]
+        ctx.save_for_backward(*to_save)
         return O
     
     @staticmethod
