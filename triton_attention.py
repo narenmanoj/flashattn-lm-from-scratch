@@ -110,7 +110,7 @@ def flash_fwd_kernel(
         block_shape=(KV_TILE_SIZE, D),
         order=(1, 0),
     )
-    output = tl.zeros((Q_TILE_SIZE, D), dtype=tl.float32)
+    O_i = tl.zeros((Q_TILE_SIZE, D), dtype=tl.float32)
     O_block_ptr = tl.make_block_ptr(
         O_ptr + batch_index * stride_ob,
         shape=(N_QUERIES, D),
@@ -127,26 +127,28 @@ def flash_fwd_kernel(
         block_shape=(Q_TILE_SIZE,),
         order=(0,),
     )
-    Q_i = tl.load(Q_block_ptr, boundary_check=(0, 1), padding_option="zero")
+    Q_i = tl.load(Q_block_ptr, boundary_check=(0, 1), padding_option="zero").to(tl.float32)
     m_i = tl.full((Q_TILE_SIZE,), -float("inf"), tl.float32)
     l_i = tl.full((Q_TILE_SIZE,), 0.0, tl.float32)
     for j in tl.static_range(0, N_TILES_KV):
-        K_j = tl.load(K_block_ptr, boundary_check=(0, 1), padding_option="zero")
-        V_j = tl.load(V_block_ptr, boundary_check=(0, 1), padding_option="zero")
+        K_j = tl.load(K_block_ptr, boundary_check=(0, 1), padding_option="zero").to(tl.float32)
+        V_j = tl.load(V_block_ptr, boundary_check=(0, 1), padding_option="zero").to(tl.float32)
         scores = tl.dot(Q_i, tl.trans(K_j)) * (D ** -0.5)
         rowmax = tl.max(scores, axis=-1)
         m_i_new = tl.maximum(rowmax, m_i)
-        m_i_new_blown = tl.expand_dims(m_i_new, axis=-1)
-        m_i_new_blown = m_i_new_blown + tl.zeros((Q_TILE_SIZE, KV_TILE_SIZE), tl.float32)
-        P_i = tl.exp(scores - m_i_new_blown)
-        P_i_rowsum = tl.sum(P_i, axis=-1)
-        exp_mi_diff = tl.exp(m_i_new - m_i)
-        l_i = P_i_rowsum + exp_mi_diff * l_i
+        P_i = tl.exp(scores - tl.expand_dims(m_i_new, 1))
+        P_i_rowsum = tl.sum(P_i, axis=1)
+        exp_mi_diff = tl.exp(m_i - m_i_new)
+        l_i = exp_mi_diff * l_i + P_i_rowsum
+        # compute O_i update here
+        O_i = O_i * tl.expand_dims(exp_mi_diff, 1) + tl.dot(P_i.to(V_j.type), V_j)
         m_i = m_i_new
         K_block_ptr = tl.advance(K_block_ptr, (KV_TILE_SIZE, 0))
         V_block_ptr = tl.advance(V_block_ptr, (KV_TILE_SIZE, 0))
-    tl.store(O_block_ptr, output, boundary_check=(0, 1))
-    tl.store(L_block_ptr, l_i, boundary_check=(0,))
+    L_i = m_i + tl.log(l_i)
+    O_i = O_i / (tl.expand_dims(l_i, 1))
+    tl.store(O_block_ptr, O_i, boundary_check=(0, 1))
+    tl.store(L_block_ptr, L_i, boundary_check=(0,))
 
 
 class TritonAttention(torch.autograd.Function):
