@@ -131,10 +131,6 @@ def flash_fwd_kernel(
     m_i = tl.full((Q_TILE_SIZE,), -float("inf"), tl.float32)
     l_i = tl.full((Q_TILE_SIZE,), 0.0, tl.float32)
     for j in tl.static_range(0, N_TILES_KV):
-        # lower_ptr_k = j * ctx.K_TILE_SIZE
-        # upper_ptr_k = min(N_KEYS, (j + 1) * ctx.K_TILE_SIZE)
-        # K_j = key[..., lower_ptr_k : upper_ptr_k, :]
-        # V_j = value[..., lower_ptr_k : upper_ptr_k, :]
         K_j = tl.load(K_block_ptr, boundary_check=(0, 1), padding_option="zero")
         V_j = tl.load(V_block_ptr, boundary_check=(0, 1), padding_option="zero")
         scores = tl.dot(Q_i, tl.trans(K_j)) * (D ** -0.5)
@@ -146,7 +142,6 @@ def flash_fwd_kernel(
         P_i_rowsum = tl.sum(P_i, axis=-1)
         exp_mi_diff = tl.exp(m_i_new - m_i)
         l_i = P_i_rowsum + exp_mi_diff * l_i
-        # tl.device_print(l_i.shape)
         m_i = m_i_new
         K_block_ptr = tl.advance(K_block_ptr, (KV_TILE_SIZE, 0))
         V_block_ptr = tl.advance(V_block_ptr, (KV_TILE_SIZE, 0))
