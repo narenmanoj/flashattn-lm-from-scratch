@@ -41,7 +41,7 @@ if __name__ == "__main__":
 
     tokenizer = tiktoken.get_encoding("gpt2")
 
-    vocab_size = tokenizer.n_vocab
+    vocab_size = hyperparams.get("vocab_size", tokenizer.n_vocab)
 
     model = TransformerLM(vocab_size=vocab_size, 
                           context_length=hyperparams["context_length"],
