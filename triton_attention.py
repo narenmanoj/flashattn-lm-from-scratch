@@ -107,7 +107,7 @@ def flash_fwd_kernel(
         block_shape=(KV_TILE_SIZE, D),
         order=(1, 0),
     )
-    O_i = tl.zeros((Q_TILE_SIZE, D)).to(Q_i.type)
+    O_i = tl.zeros((Q_TILE_SIZE, D), dtype=tl.float32)
     O_block_ptr = tl.make_block_ptr(
         O_ptr + batch_index * stride_ob,
         shape=(N_QUERIES, D),
@@ -127,10 +127,22 @@ def flash_fwd_kernel(
     
     m_i = tl.full((Q_TILE_SIZE,), -float("inf"), tl.float32)
     l_i = tl.full((Q_TILE_SIZE,), 0.0, tl.float32)
+
+    max_kv_tile = query_tile_index + 1
+    max_kv_tile = tl.minimum(max_kv_tile, N_TILES_KV)
     for j in tl.static_range(0, N_TILES_KV):
+        if is_causal and j >= max_kv_tile:
+            break
         K_j = tl.load(K_block_ptr, boundary_check=(0, 1), padding_option="zero").to(tl.float32)
         V_j = tl.load(V_block_ptr, boundary_check=(0, 1), padding_option="zero").to(tl.float32)
         scores = tl.dot(Q_i, tl.trans(K_j)) * (D ** -0.5)
+        if is_causal and j == max_kv_tile - 1:
+            q_idx = tl.arange(query_tile_index * Q_TILE_SIZE, (query_tile_index + 1) * Q_TILE_SIZE)
+            kv_idx = tl.arange(j * KV_TILE_SIZE, (j + 1) * KV_TILE_SIZE)
+            q_idx_b = tl.expand_dims(q_idx, 1) 
+            kv_idx_b = tl.expand_dims(kv_idx, 0)
+            causal_mask = kv_idx_b <= q_idx_b                               
+            scores = tl.where(causal_mask, scores, -float("inf"))
         rowmax = tl.max(scores, axis=-1)
         m_i_new = tl.maximum(rowmax, m_i)
         P_i = tl.exp(scores - tl.expand_dims(m_i_new, 1))
@@ -143,7 +155,7 @@ def flash_fwd_kernel(
         V_block_ptr = tl.advance(V_block_ptr, (KV_TILE_SIZE, 0))
     L_i = m_i + tl.log(l_i)
     O_i = O_i / (tl.expand_dims(l_i, 1))
-    tl.store(O_block_ptr, O_i, boundary_check=(0, 1))
+    tl.store(O_block_ptr, O_i.to(Q_i.type), boundary_check=(0, 1))
     tl.store(L_block_ptr, L_i, boundary_check=(0,))
 
 
@@ -152,6 +164,7 @@ class TritonAttention(torch.autograd.Function):
     def forward(ctx, query, key, value, is_causal=False):
         ctx.Q_TILE_SIZE = 16
         ctx.KV_TILE_SIZE = 16
+        assert ctx.Q_TILE_SIZE == ctx.KV_TILE_SIZE
         ctx.D = query.shape[-1]
         ctx.scale = math.sqrt(ctx.D)
         ctx.N_BATCHES = query.shape[0]
