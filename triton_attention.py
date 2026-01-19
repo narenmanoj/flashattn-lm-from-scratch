@@ -203,10 +203,29 @@ class TritonAttention(torch.autograd.Function):
             query = torch.reshape(query, query_shape)
             key = torch.reshape(key, key_shape)
             value = torch.reshape(value, value_shape)
+            O = torch.reshape(O, query_shape)
         to_save = [L, query, key, value, O]
         ctx.save_for_backward(*to_save)
         return O
     
     @staticmethod
     def backward(ctx, grad_out):
-        raise NotImplementedError
+        L, query, key, value, O = ctx.saved_tensors
+        D = reduce(einsum(O, grad_out, "batch ... seq_q d_model, batch ... seq_q d_model -> batch ... seq_q d_model"), "batch ... seq_q d_model -> batch ... seq_q", "sum")
+        scale = query.shape[-1] ** -0.5
+        seq_len = query.shape[-2]
+        S = einsum(query, key, "batch ... seq_q d_model, batch ... seq_k d_model -> batch ... seq_q seq_k") * scale
+        if ctx.is_causal:
+            mask = torch.tril(
+                torch.ones(seq_len, seq_len, device=query.device, dtype=torch.bool)
+            )
+            S = S.masked_fill(~mask, float("-inf"))
+        P = torch.exp(S - L.unsqueeze(dim=-1).expand_as(S))
+        dV = einsum(P, grad_out, "batch ... seq_q seq_k, batch ... seq_q d_model -> batch ... seq_k d_model")
+        dP = einsum(grad_out, value, "batch ... seq_q_1 d_model, batch ... seq_q_2 d_model -> batch ... seq_q_1 seq_q_2")
+        dS = einsum(P, dP - D.unsqueeze(dim=-1).expand_as(P), "batch ... seq_q_1 seq_q_2, batch ... seq_q_1 seq_q_2 -> batch ... seq_q_1 seq_q_2")
+        dQ = einsum(dS, key, "batch ... seq_q_1 seq_q_2, batch ... seq_q_2 d_model -> batch ... seq_q_1 d_model") * scale
+        dK = einsum(dS, query, "batch ... seq_q_1 seq_q_2, batch ... seq_q_1 d_model -> batch ... seq_q_2 d_model")
+
+        return (dQ, dK, dV, None)
+        
