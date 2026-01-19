@@ -29,6 +29,8 @@ A from-first-principles Transformer language model implementation in PyTorch, wi
   Triton kernel(s) and the `TritonAttention` autograd wrapper.
 - `dataset_prepare.py`  
   Dataset/tokenization/caching utilities (e.g., TinyStories/OpenWebText).
+- `test_model_from_checkpoint.py`
+  Load a model from a specified checkpoint and generate some completions.
 
 ---
 
