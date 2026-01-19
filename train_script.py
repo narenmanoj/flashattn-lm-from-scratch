@@ -209,6 +209,7 @@ if __name__ == "__main__":
                           device=device)
     try:
         model = torch.compile(model)
+        torch.set_float32_matmul_precision("high")
     except Exception as e:
         print(f"Model compilation didn't work, continuing: {e}")
     optimizer = AdamW(model.parameters())
