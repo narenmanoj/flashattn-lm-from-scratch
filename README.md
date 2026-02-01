@@ -53,3 +53,16 @@ source .venv/bin/activate  # (Windows: .venv\Scripts\activate)
 pip install -U pip
 pip install torch torchvision torchaudio
 pip install tensorboard tiktoken triton einops jaxtyping tqdm transformers datasets
+```
+
+### Example training run
+
+From config, from scratch:
+```bash
+python train_script.py --config configs/tinystories.json 
+```
+
+From checkpoint:
+```bash
+python train_script.py --load_checkpoint <directory_to_checkpoint/epoch_number>
+```
